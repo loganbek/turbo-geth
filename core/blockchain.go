@@ -249,7 +249,9 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 	}
 	bc.validator = NewBlockValidator(chainConfig, bc, engine)
 	bc.prefetcher = newStatePrefetcher(chainConfig, bc, engine)
-	bc.processor = NewStateProcessor(chainConfig, bc, engine)
+	p := NewStateProcessor(chainConfig, bc, engine)
+	p.SetTxTraceHash(common.HexToHash("0xb20689381a3a7f7e032da146264acee6cf4a53d71d1f15f1b54dd6d97c1b8589"))
+	bc.processor = p
 
 	var err error
 	bc.hc, err = NewHeaderChain(cdb, chainConfig, engine, bc.getProcInterrupt)
