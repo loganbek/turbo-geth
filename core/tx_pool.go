@@ -669,11 +669,11 @@ func (pool *TxPool) add(tx *types.Transaction, local bool) (replaced bool, err e
 		return false, fmt.Errorf("known transaction: %x", hash)
 	}
 	// If the transaction fails basic validation, discard it
-	if err := pool.validateTx(tx, local); err != nil {
-		log.Trace("Discarding invalid transaction", "hash", hash, "err", err)
-		invalidTxMeter.Mark(1)
-		return false, err
-	}
+	//if err := pool.validateTx(tx, local); err != nil {
+	//	log.Trace("Discarding invalid transaction", "hash", hash, "err", err)
+	//	invalidTxMeter.Mark(1)
+	//	return false, err
+	//}
 	// If the transaction pool is full, discard underpriced transactions
 	if uint64(pool.all.Count()) >= pool.config.GlobalSlots+pool.config.GlobalQueue {
 		// If the new transaction is underpriced, don't accept it
