@@ -1145,8 +1145,10 @@ func (tds *TrieDbState) nextIncarnation(addrHash common.Hash) (uint64, error) {
 		}
 	}
 	if found {
+		fmt.Printf("%d: %x, inc (found): %d\n", tds.blockNr, addrHash, (^uint64(0)^binary.BigEndian.Uint64(incarnationBytes[:]))+1)
 		return (^uint64(0) ^ binary.BigEndian.Uint64(incarnationBytes[:])) + 1, nil
 	}
+	fmt.Printf("%d: %x, inc: %d\n", tds.blockNr, addrHash, FirstContractIncarnation)
 	return FirstContractIncarnation, nil
 }
 
