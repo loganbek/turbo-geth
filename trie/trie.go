@@ -963,7 +963,7 @@ func (t *Trie) DeepHash(keyPrefix []byte) (bool, common.Hash) {
 	return true, accNode.Root
 }
 
-func (t *Trie) unload(hex []byte, h *hasher) {
+func (t *Trie) unload(hex []byte) {
 	nd := t.root
 	var parent node
 	pos := 0
@@ -1028,7 +1028,7 @@ func (t *Trie) unload(hex []byte, h *hasher) {
 	if nd == nil {
 		fmt.Printf("nd == nil, hex %x, parent node: %T\n", hex, parent)
 	}
-	h.hash(nd, len(hex) == 0, hn[:])
+	copy(hn[:], nd.hash())
 	hnode := hashNode(hn[:])
 	switch p := parent.(type) {
 	case nil:
