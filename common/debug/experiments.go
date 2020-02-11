@@ -9,7 +9,7 @@ var gerEnv sync.Once
 var ThinHistory bool
 
 var itcEnv sync.Once
-var intermediateTrieCache bool
+var intermediateTrieHash bool
 
 var gndEnv sync.Once
 var getNodeData bool
@@ -21,11 +21,14 @@ func IsThinHistory() bool {
 	return ThinHistory
 }
 
-func IsIntermediateTrieCache() bool {
+func IsIntermediateTrieHash() bool {
 	itcEnv.Do(func() {
-		_, intermediateTrieCache = os.LookupEnv("INTERMEDIATE_TRIE_CACHE")
+		_, intermediateTrieHash = os.LookupEnv("INTERMEDIATE_TRIE_CACHE")
+		if !intermediateTrieHash {
+			_, intermediateTrieHash = os.LookupEnv("INTERMEDIATE_TRIE_HASH")
+		}
 	})
-	return intermediateTrieCache
+	return intermediateTrieHash
 }
 
 func IsGetNodeData() bool {
