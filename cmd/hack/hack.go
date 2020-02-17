@@ -628,7 +628,7 @@ func execToBlock(block uint64, fromScratch bool) {
 	tds, err := bc.GetTrieDbState()
 	check(err)
 	if debug.IsIntermediateTrieHash() && fromScratch {
-		tds.Rebuild()
+		_ = tds.Rebuild()
 	}
 
 	importedBn := tds.GetBlockNr()
@@ -782,7 +782,6 @@ func testStartup() {
 
 func testResolveCached() {
 	execToBlock(3989604, false)
-	//execToBlock(1000)
 	return
 
 	//startTime := time.Now()
