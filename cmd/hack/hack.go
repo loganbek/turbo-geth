@@ -20,6 +20,7 @@ import (
 	"github.com/ledgerwatch/bolt"
 	"github.com/ledgerwatch/turbo-geth/common"
 	"github.com/ledgerwatch/turbo-geth/common/dbutils"
+	"github.com/ledgerwatch/turbo-geth/common/debug"
 	"github.com/ledgerwatch/turbo-geth/consensus/ethash"
 	"github.com/ledgerwatch/turbo-geth/core"
 	"github.com/ledgerwatch/turbo-geth/core/rawdb"
@@ -606,31 +607,19 @@ func trieChart() {
 	check(err)
 }
 
-func execToBlock(block int) {
-	fmt.Println(node.DefaultDataDir())
-	blockDb, err := ethdb.NewBoltDatabase(node.DefaultDataDir() + "/geth-remove-me2/geth/chaindata")
+func execToBlock(block uint64, fromScratch bool) {
+	blockDb, err := ethdb.NewBoltDatabase(node.DefaultDataDir() + "/geth/chaindata")
 	//ethDb, err := ethdb.NewBoltDatabase("/home/akhounov/.ethereum/geth/chaindata")
 	check(err)
 	bcb, err := core.NewBlockChain(blockDb, nil, params.MainnetChainConfig, ethash.NewFaker(), vm.Config{}, nil)
 	check(err)
 	defer blockDb.Close()
-	os.Remove("statedb")
+	if fromScratch {
+		os.Remove("statedb")
+	}
 	stateDb, err := ethdb.NewBoltDatabase("statedb")
 	check(err)
 	defer stateDb.Close()
-
-	//if debug.IsIntermediateTrieHash() {
-	//	now := time.Now()
-	//	stateDb.DB().Update(func(tx *bolt.Tx) error {
-	//		blockDb.Walk(dbutils.IntermediateTrieHashBucket, nil, 0, func(k, v []byte) (bool, error) {
-	//			tx.Bucket(dbutils.IntermediateTrieHashBucket).Put(k, common.CopyBytes(v))
-	//			return true, nil
-	//		})
-	//		return nil
-	//	})
-	//
-	//	fmt.Printf("Copy intermediateHash bucket: %s \n", time.Since(now))
-	//}
 
 	_, _, _, err = core.SetupGenesisBlockWithOverride(stateDb, nil, nil, nil)
 	check(err)
@@ -638,25 +627,30 @@ func execToBlock(block int) {
 	check(err)
 	tds, err := bc.GetTrieDbState()
 	check(err)
-	tds.Rebuild()
+	if debug.IsIntermediateTrieHash() && fromScratch {
+		tds.Rebuild()
+	}
+
+	importedBn := tds.GetBlockNr()
 
 	//bc.SetNoHistory(true)
 	blocks := types.Blocks{}
 	var lastBlock *types.Block
 
 	now := time.Now()
-	for i := 1; i <= block; i++ {
-		lastBlock = bcb.GetBlockByNumber(uint64(i))
+
+	for i := importedBn; i <= block; i++ {
+		lastBlock = bcb.GetBlockByNumber(i)
 		blocks = append(blocks, lastBlock)
-		if len(blocks) >= 10 || i == block {
+		if len(blocks) >= 100 || i == block {
 			_, err = bc.InsertChain(context.Background(), blocks)
 			if err != nil {
 				panic(err)
 			}
-			if i%10 == 0 {
-				fmt.Printf("Inserted %d blocks, %s \n", i, time.Since(now))
-			}
 			blocks = types.Blocks{}
+		}
+		if i%1000 == 0 {
+			fmt.Printf("Inserted %dK, %s \n", i/1000, time.Since(now))
 		}
 	}
 	root := tds.LastRoot()
@@ -787,8 +781,8 @@ func testStartup() {
 }
 
 func testResolveCached() {
-	//execToBlock(3989604)
-	execToBlock(1000)
+	execToBlock(3989604, false)
+	//execToBlock(1000)
 	return
 
 	//startTime := time.Now()

@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/ledgerwatch/turbo-geth/common"
 	"github.com/ledgerwatch/turbo-geth/common/debug"
@@ -167,7 +166,6 @@ func pruneMap(t *Trie, m map[string]struct{}, h *hasher) bool {
 	for i, hex := range hexes {
 		if i == 0 || len(hex) == 0 || !strings.HasPrefix(hex, hexes[i-1]) { // If the parent nodes pruned, there is no need to prune descendants
 			t.unload([]byte(hex), h)
-			fmt.Printf("Prune: %x\n", []byte(hex))
 			if len(hex) == 0 {
 				empty = true
 			}
@@ -196,8 +194,6 @@ func (tp *TriePruning) PruneToTimestamp(
 	if debug.IsIntermediateTrieHash() { // calculate all hashes and send them to hashBucket before unloading from tree
 		key := pool.GetBuffer(64)
 		defer pool.PutBuffer(key)
-		fmt.Println("Alex: started", len(aggregateAccounts))
-		now := time.Now()
 		for prefix := range aggregateAccounts {
 			if len(prefix) == 0 || len(prefix)%2 == 1 {
 				continue
@@ -223,9 +219,6 @@ func (tp *TriePruning) PruneToTimestamp(
 			CompressNibbles([]byte(prefix), &key.B)
 			tp.unloadNodeFunc(key.B, nd.reference())
 		}
-
-		fmt.Println("Alex: finished")
-		fmt.Println("trie_pruning.go:225", time.Since(now))
 	}
 
 	h := newHasher(false)
