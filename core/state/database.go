@@ -31,7 +31,6 @@ import (
 	"github.com/ledgerwatch/turbo-geth/common"
 	"github.com/ledgerwatch/turbo-geth/common/dbutils"
 	"github.com/ledgerwatch/turbo-geth/common/debug"
-	"github.com/ledgerwatch/turbo-geth/common/pool"
 	"github.com/ledgerwatch/turbo-geth/core/types/accounts"
 	"github.com/ledgerwatch/turbo-geth/ethdb"
 	"github.com/ledgerwatch/turbo-geth/log"
@@ -288,12 +287,11 @@ func (tds *TrieDbState) delIntermediateHash(prefixAsNibbles []byte) {
 		return
 	}
 
-	key := pool.GetBuffer(64)
-	defer pool.PutBuffer(key)
+	key := make([]byte, len(prefixAsNibbles)/2)
 
-	trie.CompressNibbles(prefixAsNibbles, &key.B)
+	trie.CompressNibbles(prefixAsNibbles, &key)
 
-	if err := tds.db.Delete(dbutils.IntermediateTrieHashBucket, common.CopyBytes(key.Bytes())); err != nil {
+	if err := tds.db.Delete(dbutils.IntermediateTrieHashBucket, key); err != nil {
 		log.Warn("could not delete intermediate trie hash", "err", err)
 		return
 	}

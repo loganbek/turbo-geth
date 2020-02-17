@@ -380,10 +380,13 @@ func (bc *BlockChain) GetTrieDbStateByBlock(root common.Hash, blockNr uint64) (*
 		tds.EnableIntermediateHash(!bc.NoIntermediateTrieHash())
 		tds.SetResolveReads(bc.resolveReads)
 		tds.EnablePreimages(bc.enablePreimages)
-		if err := tds.Rebuild(); err != nil {
-			log.Error("Rebuiling aborted", "error", err)
-			return nil, err
+		if !debug.IsIntermediateTrieHash() {
+			if err := tds.Rebuild(); err != nil {
+				log.Error("Rebuiling aborted", "error", err)
+				return nil, err
+			}
 		}
+
 		log.Info("Creation complete.")
 		return tds, nil
 	}

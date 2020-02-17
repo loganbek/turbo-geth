@@ -172,16 +172,6 @@ func (tr *ResolverStatefulCached) RebuildTrie(
 		return fmt.Errorf("only Bolt supported yet, given: %T", db)
 	}
 
-	if err := boltDb.Update(func(tx *bolt.Tx) error {
-		_, err := tx.CreateBucketIfNotExists(dbutils.IntermediateTrieHashBucket, false)
-		if err != nil {
-			return err
-		}
-		return nil
-	}); err != nil {
-		return err
-	}
-
 	var err error
 	if accounts {
 		if historical {
