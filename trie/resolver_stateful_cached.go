@@ -402,7 +402,7 @@ func (tr *ResolverStatefulCached) MultiWalk2(db *bolt.DB, blockNr uint64, bucket
 			// Special case: self-destructed accounts.
 			// self-destructed accounts may be marked in cache bucket by empty value
 			// in this case: account - add to Trie, storage - skip with subtree (it will be deleted by a background pruner)
-			isSelfDestructedMarker := len(cacheV) == 0
+			isSelfDestructedMarker := len(cacheV) < common.HashLength
 			if isSelfDestructedMarker {
 				if isAccountBucket && len(v) > 0 && bytes.Equal(k, cacheK) {
 					keyAsNibbles.Reset()

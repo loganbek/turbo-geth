@@ -292,10 +292,11 @@ func (p *SelfDestructPruner) Step(ctx context.Context) (int, error) {
 	if !debug.IsIntermediateTrieHash() {
 		return 0, nil
 	}
+
 	p.Lock()
 	pq := make([]common.Hash, len(p.priorityQueue))
 	copy(pq, p.priorityQueue)
-	p.priorityQueue = p.priorityQueue[:]
+	p.priorityQueue = p.priorityQueue[:len(p.priorityQueue)-1]
 	p.Unlock()
 
 	if len(pq) != 0 {
@@ -305,7 +306,13 @@ func (p *SelfDestructPruner) Step(ctx context.Context) (int, error) {
 				return 0, err
 			}
 		}
-		//return batchDelete(ctx, p.db, keysToRemove)
+		//batchDelete(ctx, p.db, keysToRemove)
+		//for _, addrHash := range pq {
+		//	if err := p.db.Put(dbutils.IntermediateTrieHashBucket, addrHash[:], []byte{}); err != nil {
+		//		return 0, err
+		//	}
+		//}
+
 		log.Info("SelfDestructPruner in priority queue can remove", "storage_bucket", len(keysToRemove.StorageKeys), "intermediate_bucket", len(keysToRemove.IntermediateTrieHashKeys))
 		return 0, nil
 	}
@@ -315,7 +322,7 @@ func (p *SelfDestructPruner) Step(ctx context.Context) (int, error) {
 
 func PruneSingleSelfDestructedStorage(ctx context.Context, db ethdb.Database, addrHash []byte, keysToRemove *keysToRemove) error {
 	if err := db.Walk(dbutils.StorageBucket, addrHash, common.HashLength*8, func(k, _ []byte) (b bool, e error) {
-		keysToRemove.StorageKeys = append(keysToRemove.StorageKeys, k)
+		keysToRemove.StorageKeys = append(keysToRemove.StorageKeys, common.CopyBytes(k))
 		return true, nil
 	}); err != nil {
 		return err
@@ -323,7 +330,7 @@ func PruneSingleSelfDestructedStorage(ctx context.Context, db ethdb.Database, ad
 
 	//if debug.IsThinHistory() {
 	//	if err := db.Walk(dbutils.ContractCodeBucket, k, common.HashLength*8, func(k, _ []byte) (b bool, e error) {
-	//		keysToRemove.ContractKeys = append(keysToRemove.ContractKeys, k)
+	//		keysToRemove.ContractKeys = append(keysToRemove.ContractKeys, common.CopyBytes(k))
 	//		return true, nil
 	//	}); err != nil {
 	//		return false, err
@@ -335,7 +342,7 @@ func PruneSingleSelfDestructedStorage(ctx context.Context, db ethdb.Database, ad
 			return true, nil
 		}
 
-		keysToRemove.IntermediateTrieHashKeys = append(keysToRemove.IntermediateTrieHashKeys, k)
+		keysToRemove.IntermediateTrieHashKeys = append(keysToRemove.IntermediateTrieHashKeys, common.CopyBytes(k))
 		return true, nil
 	}); err != nil {
 		return err
@@ -358,8 +365,14 @@ func PruneSelfDestructedStorage(ctx context.Context, db ethdb.Database, from []b
 		return 0, err
 	}
 
-	//return batchDelete(ctx, db, keysToRemove, SelfDestructDeleteLimit)
-	log.Debug("SelfDestructPruner can remove rows amount", "storage_bucket", len(keysToRemove.StorageKeys), "intermediate_bucket", len(keysToRemove.IntermediateTrieHashKeys))
+	//batchDelete(ctx, p.db, keysToRemove)
+	//for _, addrHash := range pq {
+	//	if err := p.db.Put(dbutils.IntermediateTrieHashBucket, addrHash[:], []byte{}); err != nil {
+	//		return 0, err
+	//	}
+	//}
+
+	log.Info("SelfDestructPruner can remove rows amount", "storage_bucket", len(keysToRemove.StorageKeys), "intermediate_bucket", len(keysToRemove.IntermediateTrieHashKeys))
 	return keysToRemove.Len(), nil
 }
 

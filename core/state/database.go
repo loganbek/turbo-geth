@@ -262,12 +262,12 @@ func (tds *TrieDbState) Copy() *TrieDbState {
 	return &cpy
 }
 
-func (tds *TrieDbState) markSubtreeEmptyInIntermediateHash(prefix []byte) {
+func (tds *TrieDbState) markAccountDeleted(prefix []byte) {
 	if len(prefix) != common.HashLength {
 		return
 	}
 
-	if err := tds.db.Put(dbutils.IntermediateTrieHashBucket, prefix, []byte{}); err != nil {
+	if err := tds.db.Put(dbutils.IntermediateTrieHashBucket, prefix, []byte{1}); err != nil {
 		log.Warn("could not put intermediate trie hash", "err", err)
 	}
 }
@@ -814,7 +814,7 @@ func (tds *TrieDbState) updateTrieRoots(forward bool) ([]common.Hash, error) {
 			tds.t.DeleteSubtree(addrHash[:])
 
 			if debug.IsIntermediateTrieHash() {
-				tds.markSubtreeEmptyInIntermediateHash(addrHash[:])
+				tds.markAccountDeleted(addrHash[:])
 				if tds.onDeleteContract != nil { // notify pruner.go
 					tds.onDeleteContract(addrHash)
 				}
