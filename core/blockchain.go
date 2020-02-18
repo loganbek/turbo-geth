@@ -318,14 +318,14 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 	// Take ownership of this particular state
 	go bc.update()
 	if !cacheConfig.Disabled {
+		ctx := context.TODO()
 		var innerErr error
-		bc.pruner, innerErr = NewBasicPruner(db, bc, bc.cacheConfig)
+		bc.pruner, innerErr = NewPruningManager(db, bc, bc.cacheConfig)
 		if innerErr != nil {
-			log.Error("Pruner init error", "err", innerErr)
-			return nil, innerErr
+			return nil, fmt.Errorf("pruner init: %w", innerErr)
 		}
 
-		innerErr = bc.pruner.Start()
+		innerErr = bc.pruner.Start(ctx)
 		if innerErr != nil {
 			log.Error("Pruner start error", "err", innerErr)
 			return nil, innerErr
@@ -2314,7 +2314,7 @@ func (bc *BlockChain) WithContext(ctx context.Context, blockNum *big.Int) contex
 }
 
 type Pruner interface {
-	Start() error
+	Start(ctx context.Context) error
 	Stop()
 }
 

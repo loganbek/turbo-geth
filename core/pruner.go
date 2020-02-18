@@ -2,6 +2,7 @@ package core
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"fmt"
 	"sync"
@@ -17,83 +18,149 @@ import (
 
 const DeleteLimit = 70000
 
+// Priority - global list of all pruners priorities. Higher priority means faster delete.
+type Priority uint8
+
+const (
+	History Priority = iota
+	SelfDestructedAccount
+)
+
 type BlockChainer interface {
 	CurrentBlock() *types.Block
 }
 
-func NewBasicPruner(database ethdb.Database, chainer BlockChainer, config *CacheConfig) (*BasicPruner, error) {
-	if config.BlocksToPrune == 0 || config.PruneTimeout.Seconds() < 1 {
-		return nil, fmt.Errorf("incorrect config BlocksToPrune - %v, PruneTimeout - %v", config.BlocksToPrune, config.PruneTimeout.Seconds())
+type FeaturePruner interface {
+	Init(ctx context.Context) error
+	Step(ctx context.Context) error
+	SaveProgress(ctx context.Context) error
+}
+
+func NewPruningManager(db ethdb.Database, chainer BlockChainer, config *CacheConfig) (*PruningManager, error) {
+	//if config.BlocksToPrune == 0 || config.PruneTimeout.Seconds() < 1 {
+	//	return nil, fmt.Errorf("incorrect config BlocksToPrune - %v, PruneTimeout - %v", config.BlocksToPrune, config.PruneTimeout.Seconds())
+	//}
+
+	p := &PruningManager{
+		config:          config,
+		wg:              &sync.WaitGroup{},
+		exclusiveStepCh: make(chan struct{}, 1),
+		pruners:         []FeaturePruner{},
 	}
 
-	return &BasicPruner{
-		wg:                 new(sync.WaitGroup),
-		db:                 database,
-		chain:              chainer,
-		config:             config,
-		LastPrunedBlockNum: 0,
-		stop:               make(chan struct{}, 1),
-	}, nil
+	hPruner, err := NewHistoryPruner(db, chainer, config)
+	if err != nil {
+		return nil, fmt.Errorf("pruner creation: %w", err)
+	}
+	p.pruners = append(p.pruners, hPruner)
+
+	sdPruner, err := NewSelfDestructPruner(db)
+	if err != nil {
+		return nil, fmt.Errorf("pruner creation: %w", err)
+	}
+	p.pruners = append(p.pruners, sdPruner)
+
+	return p, nil
 }
 
-type BasicPruner struct {
-	wg   *sync.WaitGroup
-	stop chan struct{}
-
-	db                 ethdb.Database
-	chain              BlockChainer
-	LastPrunedBlockNum uint64
-	config             *CacheConfig
+// PruningManager manages db pressure.
+// It limits amount of read/deletes and can orchestrate multiple pruners - runs one at a time.
+type PruningManager struct {
+	config          *CacheConfig
+	currentStep     uint64
+	wg              *sync.WaitGroup
+	exclusiveStepCh chan struct{} // guarantee that only one step running at a time
+	cancel          context.CancelFunc
+	pruners         []FeaturePruner
 }
 
-func (p *BasicPruner) Start() error {
-	db := p.db
-	p.LastPrunedBlockNum = p.ReadLastPrunedBlockNum()
+func (p *PruningManager) Start(ctx context.Context) error {
+	ctx, p.cancel = context.WithCancel(ctx)
 	p.wg.Add(1)
-	go p.pruningLoop(db)
+	go func() {
+		defer p.wg.Done()
+
+		for _, pruner := range p.pruners {
+			if err := pruner.Init(ctx); err != nil {
+				log.Error("pruner init progress err", "err", err, "pruner", pruner)
+				return
+			}
+		}
+
+		prunerRun := time.NewTicker(p.config.PruneTimeout)
+		defer prunerRun.Stop()
+		saveProgress := time.NewTicker(time.Minute * 5)
+		defer saveProgress.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-saveProgress.C:
+				for _, pruner := range p.pruners {
+					if err := pruner.SaveProgress(ctx); err != nil {
+						log.Error("pruner save progress err", "err", err)
+					}
+				}
+			case <-prunerRun.C:
+				p.currentStep++
+				pruner := p.pruners[p.currentStep%uint64(len(p.pruners))]
+				err := pruner.Step(ctx)
+				if err != nil {
+					log.Error("pruner step err", "err", err, "pruner", pruner)
+				}
+			}
+
+		}
+	}()
 	log.Info("Pruner started")
 
 	return nil
 }
 
-func (p *BasicPruner) pruningLoop(db ethdb.Database) {
-	prunerRun := time.NewTicker(p.config.PruneTimeout)
-	saveLastPrunedBlockNum := time.NewTicker(time.Minute * 5)
-	defer prunerRun.Stop()
-	defer saveLastPrunedBlockNum.Stop()
-	defer p.wg.Done()
-	for {
-		select {
-		case <-p.stop:
-			p.WriteLastPrunedBlockNum(p.LastPrunedBlockNum)
-			log.Info("Pruning stopped")
-			return
-		case <-saveLastPrunedBlockNum.C:
-			log.Info("Save last pruned block num", "num", p.LastPrunedBlockNum)
-			p.WriteLastPrunedBlockNum(p.LastPrunedBlockNum)
-		case <-prunerRun.C:
-			cb := p.chain.CurrentBlock()
-			if cb == nil || cb.Number() == nil {
-				continue
-			}
-			from, to, ok := calculateNumOfPrunedBlocks(cb.Number().Uint64(), p.LastPrunedBlockNum, p.config.BlocksBeforePruning, p.config.BlocksToPrune)
-			if !ok {
-				continue
-			}
-			log.Debug("Pruning history", "from", from, "to", to)
-			err := Prune(db, from, to)
-			if err != nil {
-				log.Error("Pruning error", "err", err)
-				return
-			}
-			err = PruneStorageOfSelfDestructedAccounts(db)
-			if err != nil {
-				log.Error("PruneStorageOfSelfDestructedAccounts error", "err", err)
-				return
-			}
-			p.LastPrunedBlockNum = to
-		}
+func (p *PruningManager) Stop() {
+	if p.cancel != nil {
+		p.cancel()
 	}
+	p.wg.Wait()
+	log.Info("Pruning stopped")
+}
+
+func NewHistoryPruner(db ethdb.Database, chain BlockChainer, config *CacheConfig) (*HistoryPruner, error) {
+	if config.BlocksToPrune == 0 || config.PruneTimeout.Seconds() < 1 {
+		return nil, fmt.Errorf("incorrect config BlocksToPrune - %v, PruneTimeout - %v", config.BlocksToPrune, config.PruneTimeout.Seconds())
+	}
+
+	return &HistoryPruner{
+		db:     db,
+		chain:  chain,
+		config: config,
+	}, nil
+}
+
+type HistoryPruner struct {
+	lastPrunedBlockNum uint64
+	db                 ethdb.Database
+	chain              BlockChainer
+	config             *CacheConfig
+}
+
+func (p *HistoryPruner) Step(ctx context.Context) error {
+	cb := p.chain.CurrentBlock()
+	if cb == nil || cb.Number() == nil {
+		return nil
+	}
+	from, to, ok := calculateNumOfPrunedBlocks(cb.Number().Uint64(), p.lastPrunedBlockNum, p.config.BlocksBeforePruning, p.config.BlocksToPrune)
+	if !ok {
+		return nil
+	}
+	log.Debug("Pruning history", "from", from, "to", to)
+	if err := PruneHistory(ctx, p.db, from, to); err != nil {
+		return fmt.Errorf("history pruning error: %w", err)
+	}
+	p.lastPrunedBlockNum = to
+
+	return nil
 }
 
 func calculateNumOfPrunedBlocks(currentBlock, lastPrunedBlock uint64, blocksBeforePruning uint64, blocksBatch uint64) (uint64, uint64, bool) {
@@ -116,68 +183,42 @@ func calculateNumOfPrunedBlocks(currentBlock, lastPrunedBlock uint64, blocksBefo
 		return lastPrunedBlock, lastPrunedBlock, false
 	}
 }
-func (p *BasicPruner) Stop() {
-	p.stop <- struct{}{}
-	p.wg.Wait()
-	log.Info("Pruning stopped")
-}
 
-func (p *BasicPruner) ReadLastPrunedBlockNum() uint64 {
-	data, _ := p.db.Get(dbutils.LastPrunedBlockKey, dbutils.LastPrunedBlockKey)
-	if len(data) == 0 {
-		return 0
-	}
-	return binary.LittleEndian.Uint64(data)
-}
+var LastPrunedBlockKey = []byte("History.LastPrunedBlock")
 
-// WriteHeadBlockHash stores the head block's hash.
-func (p *BasicPruner) WriteLastPrunedBlockNum(num uint64) {
-	b := make([]byte, 8)
-	binary.LittleEndian.PutUint64(b, num)
-	if err := p.db.Put(dbutils.LastPrunedBlockKey, dbutils.LastPrunedBlockKey, b); err != nil {
-		log.Crit("Failed to store last pruned block's num", "err", err)
-	}
-}
-
-func PruneStorageOfSelfDestructedAccounts(db ethdb.Database) error {
-	if !debug.IsIntermediateTrieHash() {
-		return nil
-	}
-
-	keysToRemove := newKeysToRemove()
-	if err := db.Walk(dbutils.IntermediateTrieHashBucket, []byte{}, 0, func(k, v []byte) (b bool, e error) {
-		if len(v) > 0 && len(k) != common.HashLength { // marker of self-destructed account is - empty value
-			return true, nil
-		}
-
-		if err := db.Walk(dbutils.StorageBucket, k, common.HashLength*8, func(k, _ []byte) (b bool, e error) {
-			keysToRemove.StorageKeys = append(keysToRemove.StorageKeys, k)
-			return true, nil
-		}); err != nil {
-			return false, err
-		}
-
-		if err := db.Walk(dbutils.IntermediateTrieHashBucket, k, common.HashLength*8, func(k, _ []byte) (b bool, e error) {
-			keysToRemove.IntermediateTrieHashKeys = append(keysToRemove.IntermediateTrieHashKeys, k)
-			return true, nil
-		}); err != nil {
-			return false, err
-		}
-
-		return true, nil
-	}); err != nil {
+func (p *HistoryPruner) Init(ctx context.Context) error {
+	data, err := p.db.Get(dbutils.PrunerProgressBucket, LastPrunedBlockKey)
+	if err != nil {
 		return err
 	}
 
-	//return batchDelete(db, keysToRemove)
-	log.Debug("PruneStorageOfSelfDestructedAccounts can remove rows amount", "storage_bucket", len(keysToRemove.StorageKeys), "intermediate_bucket", len(keysToRemove.IntermediateTrieHashKeys))
-
+	if len(data) == 0 {
+		p.lastPrunedBlockNum = 0
+		return nil
+	}
+	p.lastPrunedBlockNum = binary.LittleEndian.Uint64(data)
 	return nil
 }
 
-func Prune(db ethdb.Database, blockNumFrom uint64, blockNumTo uint64) error {
+// SaveProgress stores the head block's hash.
+func (p *HistoryPruner) SaveProgress(ctx context.Context) error {
+	b := make([]byte, 8)
+	binary.LittleEndian.PutUint64(b, p.lastPrunedBlockNum)
+	if err := p.db.Put(dbutils.PrunerProgressBucket, LastPrunedBlockKey, b); err != nil {
+		return fmt.Errorf("failed to store last pruned block's num: %w", err)
+	}
+	return nil
+}
+
+func PruneHistory(ctx context.Context, db ethdb.Database, blockNumFrom uint64, blockNumTo uint64) error {
 	keysToRemove := newKeysToRemove()
 	err := db.Walk(dbutils.ChangeSetBucket, []byte{}, 0, func(key, v []byte) (b bool, e error) {
+		select {
+		case <-ctx.Done():
+			return false, ctx.Err()
+		default:
+		}
+
 		timestamp, _ := dbutils.DecodeTimestamp(key)
 		if timestamp < blockNumFrom {
 			return true, nil
@@ -206,7 +247,7 @@ func Prune(db ethdb.Database, blockNumFrom uint64, blockNumTo uint64) error {
 	if err != nil {
 		return err
 	}
-	err = batchDelete(db, keysToRemove)
+	err = batchDelete(ctx, db, keysToRemove)
 	if err != nil {
 		return err
 	}
@@ -214,13 +255,89 @@ func Prune(db ethdb.Database, blockNumFrom uint64, blockNumTo uint64) error {
 	return nil
 }
 
-func batchDelete(db ethdb.Database, keys *keysToRemove) error {
+type SelfDestructPruner struct {
+	lastKey []byte
+
+	db ethdb.Database
+}
+
+func NewSelfDestructPruner(db ethdb.Database) (*SelfDestructPruner, error) {
+	return &SelfDestructPruner{
+		db: db,
+	}, nil
+}
+
+func (p *SelfDestructPruner) Step(ctx context.Context) error {
+	if !debug.IsIntermediateTrieHash() {
+		return nil
+	}
+	return PruneSelfDestructedStorage(ctx, p.db)
+}
+
+func PruneSelfDestructedStorage(ctx context.Context, db ethdb.Database) error {
+	keysToRemove := newKeysToRemove()
+	if err := db.Walk(dbutils.IntermediateTrieHashBucket, []byte{}, 0, func(k, v []byte) (b bool, e error) {
+		if len(v) > 0 && len(k) != common.HashLength { // marker of self-destructed account is - empty value
+			return true, nil
+		}
+
+		if err := db.Walk(dbutils.StorageBucket, k, common.HashLength*8, func(k, _ []byte) (b bool, e error) {
+			keysToRemove.StorageKeys = append(keysToRemove.StorageKeys, k)
+			return true, nil
+		}); err != nil {
+			return false, err
+		}
+
+		if err := db.Walk(dbutils.IntermediateTrieHashBucket, k, common.HashLength*8, func(k, _ []byte) (b bool, e error) {
+			keysToRemove.IntermediateTrieHashKeys = append(keysToRemove.IntermediateTrieHashKeys, k)
+			return true, nil
+		}); err != nil {
+			return false, err
+		}
+
+		return true, nil
+	}); err != nil {
+		return err
+	}
+
+	//return batchDelete(ctx, db, keysToRemove)
+	log.Debug("SelfDestructPruner can remove rows amount", "storage_bucket", len(keysToRemove.StorageKeys), "intermediate_bucket", len(keysToRemove.IntermediateTrieHashKeys))
+	return nil
+}
+
+var LastPrunedSelfDestructedAccountKey = []byte("SelfDestruct.LastPrunedAccount")
+
+// SaveProgress
+func (p *SelfDestructPruner) Init(ctx context.Context) error {
+	val, err := p.db.Get(dbutils.PrunerProgressBucket, LastPrunedSelfDestructedAccountKey)
+	if err != nil {
+		return fmt.Errorf("failed to get last pruned key: %w", err)
+	}
+	p.lastKey = val
+	return nil
+}
+
+func (p *SelfDestructPruner) SaveProgress(ctx context.Context) error {
+	if err := p.db.Put(dbutils.PrunerProgressBucket, LastPrunedSelfDestructedAccountKey, common.CopyBytes(p.lastKey)); err != nil {
+		return fmt.Errorf("failed to store last pruned key: %w", err)
+	}
+	return nil
+}
+
+func batchDelete(ctx context.Context, db ethdb.Database, keys *keysToRemove) error {
 	log.Debug("Removing: ", "accounts", len(keys.AccountHistoryKeys), "storage", len(keys.StorageHistoryKeys), "suffix", len(keys.ChangeSet))
 	iterator := LimitIterator(keys, DeleteLimit)
 	for iterator.HasMore() {
 		iterator.ResetLimit()
 		batch := db.NewBatch()
 		for {
+			select {
+			case <-ctx.Done():
+				batch.Rollback()
+				return ctx.Err()
+			default:
+			}
+
 			key, bucketKey, ok := iterator.GetNext()
 			if !ok {
 				break

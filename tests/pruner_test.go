@@ -130,8 +130,8 @@ func TestBasisAccountPruning(t *testing.T) {
 		t.Fatal("Not equal")
 	}
 
-	//Prune database history up to HEAD-1
-	err = core.Prune(db, 0, uint64(numBlocks)-1)
+	//PruneHistory database history up to HEAD-1
+	err = core.PruneHistory(context.Background(), db, 0, uint64(numBlocks)-1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,8 +155,8 @@ func TestBasisAccountPruning(t *testing.T) {
 		t.Fatal("Not equal")
 	}
 
-	//Prune database history up to HEAD
-	err = core.Prune(db, uint64(numBlocks)-1, uint64(numBlocks))
+	//PruneHistory database history up to HEAD
+	err = core.PruneHistory(context.Background(), db, uint64(numBlocks)-1, uint64(numBlocks))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -287,7 +287,7 @@ func TestBasisAccountPruningNoHistory(t *testing.T) {
 		t.Fatal("Not equal")
 	}
 
-	err = core.Prune(db, 0, uint64(numBlocks)-1)
+	err = core.PruneHistory(context.Background(), db, 0, uint64(numBlocks)-1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -310,8 +310,8 @@ func TestBasisAccountPruningNoHistory(t *testing.T) {
 		t.Fatal("Not equal")
 	}
 
-	//Prune database history up to HEAD
-	err = core.Prune(db, uint64(numBlocks)-1, uint64(numBlocks))
+	//PruneHistory database history up to HEAD
+	err = core.PruneHistory(context.Background(), db, uint64(numBlocks)-1, uint64(numBlocks))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -504,7 +504,7 @@ func TestStoragePruning(t *testing.T) {
 		t.Fatal("not equals")
 	}
 
-	err = core.Prune(db, 0, uint64(blockNum-1))
+	err = core.PruneHistory(context.Background(), db, 0, uint64(blockNum-1))
 	assertNil(t, err)
 	res, err = getStat(db)
 	assertNil(t, err)
@@ -597,9 +597,9 @@ func TestBasisAccountPruningStrategy(t *testing.T) {
 		block.AddTx(tx)
 	})
 
-	pruner, err := core.NewBasicPruner(db, blockchain, &core.CacheConfig{BlocksBeforePruning: 1, BlocksToPrune: 10, PruneTimeout: time.Second})
+	pruner, err := core.NewPruningManager(db, blockchain, &core.CacheConfig{BlocksBeforePruning: 1, BlocksToPrune: 10, PruneTimeout: time.Second})
 	assertNil(t, err)
-	err = pruner.Start()
+	err = pruner.Start(context.Background())
 	assertNil(t, err)
 
 	for i := range blocks {

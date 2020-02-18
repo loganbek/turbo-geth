@@ -79,7 +79,6 @@ var (
 	PreimageCounter    = metrics.NewRegisteredCounter("db/preimage/total", nil)
 	PreimageHitCounter = metrics.NewRegisteredCounter("db/preimage/hits", nil)
 
-	// last block that was pruned
-	// it's saved one in 5 minutes
-	LastPrunedBlockKey = []byte("LastPrunedBlock")
+	// pruners saving here progress
+	PrunerProgressBucket = []byte("p")
 )

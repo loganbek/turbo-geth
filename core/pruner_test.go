@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strconv"
@@ -161,7 +162,10 @@ func TestPruneStorageOfSelfDestructedAccounts(t *testing.T) {
 	putStorage(k1, "9999")
 	putStorage(k2, "9999")
 
-	err := PruneStorageOfSelfDestructedAccounts(db)
+	pruner, err := NewSelfDestructPruner(db)
+	require.NoError(err)
+
+	err = pruner.Step(context.Background())
 	require.NoError(err)
 
 	v, err := db.Get(dbutils.StorageBucket, storageKey(k1))
