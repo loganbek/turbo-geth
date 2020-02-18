@@ -319,12 +319,16 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 	go bc.update()
 	if !cacheConfig.Disabled {
 		ctx := context.TODO()
-		var innerErr error
-		bc.pruner, innerErr = NewPruningManager(db, bc, bc.cacheConfig)
+		pruner, innerErr := NewPruningManager(db, bc, bc.cacheConfig)
 		if innerErr != nil {
 			return nil, fmt.Errorf("pruner init: %w", innerErr)
 		}
 
+		if casted, ok := db.(ethdb.CanNotifyAboutContractDelete); ok {
+			casted.SetOnDeleteContract(pruner.NotifyAboutContractDelete)
+		}
+
+		bc.pruner = pruner
 		innerErr = bc.pruner.Start(ctx)
 		if innerErr != nil {
 			log.Error("Pruner start error", "err", innerErr)

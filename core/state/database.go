@@ -178,6 +178,7 @@ type TrieDbState struct {
 	hashBuilder            *trie.HashBuilder
 	resolver               *trie.Resolver
 	incarnationMap         map[common.Hash]uint64 // Temporary map of incarnation in case we cannot figure out from the database
+	onDeleteContract       func(addrHash common.Hash)
 }
 
 func NewTrieDbState(root common.Hash, db ethdb.Database, blockNr uint64) (*TrieDbState, error) {
@@ -209,7 +210,6 @@ func NewTrieDbState(root common.Hash, db ethdb.Database, blockNr uint64) (*TrieD
 
 	if debug.IsIntermediateTrieHash() {
 		tp.SetUnloadNodeFunc(tds.putIntermediateHash)
-		t.SetOnDeleteSubtreeFunc(tds.markSubtreeEmptyInIntermediateHash)
 		tp.SetCreateNodeFunc(tds.delIntermediateHash)
 	}
 
@@ -256,7 +256,6 @@ func (tds *TrieDbState) Copy() *TrieDbState {
 
 	if debug.IsIntermediateTrieHash() {
 		cpy.tp.SetUnloadNodeFunc(cpy.putIntermediateHash)
-		cpy.t.SetOnDeleteSubtreeFunc(tds.markSubtreeEmptyInIntermediateHash)
 		cpy.tp.SetCreateNodeFunc(cpy.delIntermediateHash)
 	}
 
@@ -685,6 +684,11 @@ func (tds *TrieDbState) updateTrieRoots(forward bool) ([]common.Hash, error) {
 			if _, ok := alreadyCreated[addrHash]; ok {
 				continue
 			}
+
+			if debug.IsIntermediateTrieHash() {
+				// TODO: wait for intermediateHash bucket
+			}
+
 			alreadyCreated[addrHash] = struct{}{}
 			if account, ok := b.accountUpdates[addrHash]; ok && account != nil {
 				b.accountUpdates[addrHash].Root = trie.EmptyRoot
@@ -808,6 +812,13 @@ func (tds *TrieDbState) updateTrieRoots(forward bool) ([]common.Hash, error) {
 				account.Root = trie.EmptyRoot
 			}
 			tds.t.DeleteSubtree(addrHash[:])
+
+			if debug.IsIntermediateTrieHash() {
+				tds.markSubtreeEmptyInIntermediateHash(addrHash[:])
+				if tds.onDeleteContract != nil { // notify pruner.go
+					tds.onDeleteContract(addrHash)
+				}
+			}
 		}
 		roots[i] = tds.t.Hash()
 	}

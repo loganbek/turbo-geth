@@ -20,6 +20,7 @@ import (
 	"errors"
 
 	"github.com/ledgerwatch/bolt"
+	"github.com/ledgerwatch/turbo-geth/common"
 )
 
 // DESCRIBED: For info on database buckets see docs/programmers_guide/db_walkthrough.MD
@@ -129,6 +130,10 @@ type HasDb interface {
 
 type HasBolt interface {
 	DB() *bolt.DB
+}
+
+type CanNotifyAboutContractDelete interface {
+	SetOnDeleteContract(func(addrHash common.Hash))
 }
 
 var errNotSupported = errors.New("not supported")

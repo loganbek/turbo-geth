@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -32,7 +33,7 @@ type BlockChainer interface {
 
 type FeaturePruner interface {
 	Init(ctx context.Context) error
-	Step(ctx context.Context) error
+	Step(ctx context.Context) (prunedAmount int, err error)
 	SaveProgress(ctx context.Context) error
 }
 
@@ -71,7 +72,20 @@ type PruningManager struct {
 	wg              *sync.WaitGroup
 	exclusiveStepCh chan struct{} // guarantee that only one step running at a time
 	cancel          context.CancelFunc
-	pruners         []FeaturePruner
+
+	pruners []FeaturePruner
+}
+
+func (p *PruningManager) NotifyAboutContractDelete(addrHash common.Hash) {
+	for _, pruner := range p.pruners {
+		if casted, ok := pruner.(*SelfDestructPruner); ok {
+			casted.Lock()
+			casted.priorityQueue = append(casted.priorityQueue, addrHash)
+			casted.Unlock()
+		}
+
+	}
+	fmt.Println("Alex notified!", addrHash)
 }
 
 func (p *PruningManager) Start(ctx context.Context) error {
@@ -105,10 +119,11 @@ func (p *PruningManager) Start(ctx context.Context) error {
 			case <-prunerRun.C:
 				p.currentStep++
 				pruner := p.pruners[p.currentStep%uint64(len(p.pruners))]
-				err := pruner.Step(ctx)
+				total, err := pruner.Step(ctx)
 				if err != nil {
 					log.Error("pruner step err", "err", err, "pruner", pruner)
 				}
+				_ = total
 			}
 
 		}
@@ -145,22 +160,23 @@ type HistoryPruner struct {
 	config             *CacheConfig
 }
 
-func (p *HistoryPruner) Step(ctx context.Context) error {
+func (p *HistoryPruner) Step(ctx context.Context) (int, error) {
 	cb := p.chain.CurrentBlock()
 	if cb == nil || cb.Number() == nil {
-		return nil
+		return 0, nil
 	}
 	from, to, ok := calculateNumOfPrunedBlocks(cb.Number().Uint64(), p.lastPrunedBlockNum, p.config.BlocksBeforePruning, p.config.BlocksToPrune)
 	if !ok {
-		return nil
+		return 0, nil
 	}
 	log.Debug("Pruning history", "from", from, "to", to)
-	if err := PruneHistory(ctx, p.db, from, to); err != nil {
-		return fmt.Errorf("history pruning error: %w", err)
+	total, err := PruneHistory(ctx, p.db, from, to)
+	if err != nil {
+		return 0, fmt.Errorf("history pruning error: %w", err)
 	}
 	p.lastPrunedBlockNum = to
 
-	return nil
+	return total, nil
 }
 
 func calculateNumOfPrunedBlocks(currentBlock, lastPrunedBlock uint64, blocksBeforePruning uint64, blocksBatch uint64) (uint64, uint64, bool) {
@@ -188,7 +204,7 @@ var LastPrunedBlockKey = []byte("History.LastPrunedBlock")
 
 func (p *HistoryPruner) Init(ctx context.Context) error {
 	data, err := p.db.Get(dbutils.PrunerProgressBucket, LastPrunedBlockKey)
-	if err != nil {
+	if err != nil && !errors.Is(err, ethdb.ErrKeyNotFound) {
 		return err
 	}
 
@@ -210,7 +226,7 @@ func (p *HistoryPruner) SaveProgress(ctx context.Context) error {
 	return nil
 }
 
-func PruneHistory(ctx context.Context, db ethdb.Database, blockNumFrom uint64, blockNumTo uint64) error {
+func PruneHistory(ctx context.Context, db ethdb.Database, blockNumFrom uint64, blockNumTo uint64) (int, error) {
 	keysToRemove := newKeysToRemove()
 	err := db.Walk(dbutils.ChangeSetBucket, []byte{}, 0, func(key, v []byte) (b bool, e error) {
 		select {
@@ -245,64 +261,105 @@ func PruneHistory(ctx context.Context, db ethdb.Database, blockNumFrom uint64, b
 		return true, nil
 	})
 	if err != nil {
-		return err
+		return 0, err
 	}
+	total := keysToRemove.Len()
 	err = batchDelete(ctx, db, keysToRemove)
 	if err != nil {
-		return err
+		return total, err
 	}
 
-	return nil
+	return total, nil
 }
 
 type SelfDestructPruner struct {
 	lastKey []byte
+	sync.RWMutex
+	priorityQueue []common.Hash
 
 	db ethdb.Database
 }
 
 func NewSelfDestructPruner(db ethdb.Database) (*SelfDestructPruner, error) {
 	return &SelfDestructPruner{
-		db: db,
+		db:            db,
+		priorityQueue: make([]common.Hash, 0, 100),
 	}, nil
 }
 
-func (p *SelfDestructPruner) Step(ctx context.Context) error {
+func (p *SelfDestructPruner) Step(ctx context.Context) (int, error) {
 	if !debug.IsIntermediateTrieHash() {
-		return nil
+		return 0, nil
 	}
-	return PruneSelfDestructedStorage(ctx, p.db)
+	p.Lock()
+	pq := make([]common.Hash, len(p.priorityQueue))
+	copy(pq, p.priorityQueue)
+	p.priorityQueue = p.priorityQueue[:]
+	p.Unlock()
+
+	if len(pq) != 0 {
+		keysToRemove := newKeysToRemove()
+		for _, addrHash := range pq {
+			if err := PruneSingleSelfDestructedStorage(ctx, p.db, addrHash[:], keysToRemove); err != nil {
+				return 0, err
+			}
+		}
+		//return batchDelete(ctx, p.db, keysToRemove)
+		log.Info("SelfDestructPruner in priority queue can remove", "storage_bucket", len(keysToRemove.StorageKeys), "intermediate_bucket", len(keysToRemove.IntermediateTrieHashKeys))
+		return 0, nil
+	}
+
+	return PruneSelfDestructedStorage(ctx, p.db, p.lastKey)
 }
 
-func PruneSelfDestructedStorage(ctx context.Context, db ethdb.Database) error {
-	keysToRemove := newKeysToRemove()
-	if err := db.Walk(dbutils.IntermediateTrieHashBucket, []byte{}, 0, func(k, v []byte) (b bool, e error) {
-		if len(v) > 0 && len(k) != common.HashLength { // marker of self-destructed account is - empty value
-			return true, nil
-		}
-
-		if err := db.Walk(dbutils.StorageBucket, k, common.HashLength*8, func(k, _ []byte) (b bool, e error) {
-			keysToRemove.StorageKeys = append(keysToRemove.StorageKeys, k)
-			return true, nil
-		}); err != nil {
-			return false, err
-		}
-
-		if err := db.Walk(dbutils.IntermediateTrieHashBucket, k, common.HashLength*8, func(k, _ []byte) (b bool, e error) {
-			keysToRemove.IntermediateTrieHashKeys = append(keysToRemove.IntermediateTrieHashKeys, k)
-			return true, nil
-		}); err != nil {
-			return false, err
-		}
-
+func PruneSingleSelfDestructedStorage(ctx context.Context, db ethdb.Database, addrHash []byte, keysToRemove *keysToRemove) error {
+	if err := db.Walk(dbutils.StorageBucket, addrHash, common.HashLength*8, func(k, _ []byte) (b bool, e error) {
+		keysToRemove.StorageKeys = append(keysToRemove.StorageKeys, k)
 		return true, nil
 	}); err != nil {
 		return err
 	}
 
+	//if debug.IsThinHistory() {
+	//	if err := db.Walk(dbutils.ContractCodeBucket, k, common.HashLength*8, func(k, _ []byte) (b bool, e error) {
+	//		keysToRemove.ContractKeys = append(keysToRemove.ContractKeys, k)
+	//		return true, nil
+	//	}); err != nil {
+	//		return false, err
+	//	}
+	//}
+
+	if err := db.Walk(dbutils.IntermediateTrieHashBucket, addrHash, common.HashLength*8, func(k, _ []byte) (b bool, e error) {
+		if len(k) <= common.HashLength {
+			return true, nil
+		}
+
+		keysToRemove.IntermediateTrieHashKeys = append(keysToRemove.IntermediateTrieHashKeys, k)
+		return true, nil
+	}); err != nil {
+		return err
+	}
+	return nil
+}
+
+func PruneSelfDestructedStorage(ctx context.Context, db ethdb.Database, from []byte) (int, error) {
+	keysToRemove := newKeysToRemove()
+	if err := db.Walk(dbutils.IntermediateTrieHashBucket, from, 0, func(k, v []byte) (b bool, e error) {
+		canPrune := len(k) == common.HashLength && len(v) == 1 && v[0] == 1 // marker of self-destructed account is - 1
+		if !canPrune {
+			return true, nil
+		}
+		if err := PruneSingleSelfDestructedStorage(ctx, db, k, keysToRemove); err != nil {
+			return false, err
+		}
+		return true, nil
+	}); err != nil {
+		return 0, err
+	}
+
 	//return batchDelete(ctx, db, keysToRemove)
 	log.Debug("SelfDestructPruner can remove rows amount", "storage_bucket", len(keysToRemove.StorageKeys), "intermediate_bucket", len(keysToRemove.IntermediateTrieHashKeys))
-	return nil
+	return keysToRemove.Len(), nil
 }
 
 var LastPrunedSelfDestructedAccountKey = []byte("SelfDestruct.LastPrunedAccount")
@@ -310,7 +367,7 @@ var LastPrunedSelfDestructedAccountKey = []byte("SelfDestruct.LastPrunedAccount"
 // SaveProgress
 func (p *SelfDestructPruner) Init(ctx context.Context) error {
 	val, err := p.db.Get(dbutils.PrunerProgressBucket, LastPrunedSelfDestructedAccountKey)
-	if err != nil {
+	if err != nil && !errors.Is(err, ethdb.ErrKeyNotFound) {
 		return fmt.Errorf("failed to get last pruned key: %w", err)
 	}
 	p.lastKey = val
@@ -378,6 +435,10 @@ type keysToRemove struct {
 	ChangeSet                Keys
 	StorageKeys              Keys
 	IntermediateTrieHashKeys Keys
+}
+
+func (k keysToRemove) Len() int {
+	return len(k.AccountHistoryKeys) + len(k.StorageHistoryKeys) + len(k.ChangeSet) + len(k.StorageKeys) + len(k.IntermediateTrieHashKeys)
 }
 
 func LimitIterator(k *keysToRemove, limit int) *limitIterator {
