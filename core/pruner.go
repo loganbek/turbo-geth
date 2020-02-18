@@ -17,7 +17,8 @@ import (
 	"github.com/ledgerwatch/turbo-geth/log"
 )
 
-const DeleteLimit = 70000
+const HistoryDeleteLimit = 70000
+const SelfDestructDeleteLimit = 10000
 
 // Priority - global list of all pruners priorities. Higher priority means faster delete.
 type Priority uint8
@@ -264,7 +265,7 @@ func PruneHistory(ctx context.Context, db ethdb.Database, blockNumFrom uint64, b
 		return 0, err
 	}
 	total := keysToRemove.Len()
-	err = batchDelete(ctx, db, keysToRemove)
+	err = batchDelete(ctx, db, keysToRemove, HistoryDeleteLimit)
 	if err != nil {
 		return total, err
 	}
@@ -357,7 +358,7 @@ func PruneSelfDestructedStorage(ctx context.Context, db ethdb.Database, from []b
 		return 0, err
 	}
 
-	//return batchDelete(ctx, db, keysToRemove)
+	//return batchDelete(ctx, db, keysToRemove, SelfDestructDeleteLimit)
 	log.Debug("SelfDestructPruner can remove rows amount", "storage_bucket", len(keysToRemove.StorageKeys), "intermediate_bucket", len(keysToRemove.IntermediateTrieHashKeys))
 	return keysToRemove.Len(), nil
 }
@@ -381,9 +382,9 @@ func (p *SelfDestructPruner) SaveProgress(ctx context.Context) error {
 	return nil
 }
 
-func batchDelete(ctx context.Context, db ethdb.Database, keys *keysToRemove) error {
+func batchDelete(ctx context.Context, db ethdb.Database, keys *keysToRemove, batchSize int) error {
 	log.Debug("Removing: ", "accounts", len(keys.AccountHistoryKeys), "storage", len(keys.StorageHistoryKeys), "suffix", len(keys.ChangeSet))
-	iterator := LimitIterator(keys, DeleteLimit)
+	iterator := LimitIterator(keys, batchSize)
 	for iterator.HasMore() {
 		iterator.ResetLimit()
 		batch := db.NewBatch()
