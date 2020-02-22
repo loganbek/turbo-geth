@@ -39,7 +39,7 @@ func TestBoltDB_WalkAsOf1(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		err = block6Expected.Add(key, val)
+		err = block6Expected.Add(common.CopyBytes(key), val)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -66,7 +66,7 @@ func TestBoltDB_WalkAsOf1(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		err = block2Expected.Add(key, val)
+		err = block2Expected.Add(common.CopyBytes(key), val)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -84,7 +84,7 @@ func TestBoltDB_WalkAsOf1(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		err = block4Expected.Add(key, val)
+		err = block4Expected.Add(common.CopyBytes(key), val)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -107,7 +107,7 @@ func TestBoltDB_WalkAsOf1(t *testing.T) {
 	var err error
 	var startKey [72]byte
 	err = db.WalkAsOf(dbutils.StorageBucket, dbutils.StorageHistoryBucket, startKey[:], 0, 2, func(k []byte, v []byte) (b bool, e error) {
-		err = block2.Add(k, v)
+		err = block2.Add(common.CopyBytes(k), v)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -120,7 +120,7 @@ func TestBoltDB_WalkAsOf1(t *testing.T) {
 	}
 
 	err = db.WalkAsOf(dbutils.StorageBucket, dbutils.StorageHistoryBucket, startKey[:], 0, 4, func(k []byte, v []byte) (b bool, e error) {
-		err = block4.Add(k, v)
+		err = block4.Add(common.CopyBytes(k), v)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -133,7 +133,7 @@ func TestBoltDB_WalkAsOf1(t *testing.T) {
 	}
 
 	err = db.WalkAsOf(dbutils.StorageBucket, dbutils.StorageHistoryBucket, startKey[:], 0, 6, func(k []byte, v []byte) (b bool, e error) {
-		err = block6.Add(k, v)
+		err = block6.Add(common.CopyBytes(k), v)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -292,7 +292,7 @@ func TestBoltDB_MultiWalkAsOf(t *testing.T) {
 
 	err = db.MultiWalkAsOf(dbutils.StorageBucket, dbutils.StorageHistoryBucket, startKeys, fixedBits, 2, func(idx int, k []byte, v []byte) error {
 		fmt.Printf("%v - %s - %s\n", idx, string(k), string(v))
-		err = block2.Add(k, v)
+		err = block2.Add(common.CopyBytes(k), v)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -303,7 +303,7 @@ func TestBoltDB_MultiWalkAsOf(t *testing.T) {
 	}
 	err = db.MultiWalkAsOf(dbutils.StorageBucket, dbutils.StorageHistoryBucket, startKeys, fixedBits, 4, func(idx int, k []byte, v []byte) error {
 		fmt.Printf("%v - %s - %s\n", idx, string(k), string(v))
-		err = block4.Add(k, v)
+		err = block4.Add(common.CopyBytes(k), v)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -314,7 +314,7 @@ func TestBoltDB_MultiWalkAsOf(t *testing.T) {
 	}
 	err = db.MultiWalkAsOf(dbutils.StorageBucket, dbutils.StorageHistoryBucket, startKeys, fixedBits, 6, func(idx int, k []byte, v []byte) error {
 		fmt.Printf("%v - %s - %s\n", idx, string(k), string(v))
-		err = block6.Add(k, v)
+		err = block6.Add(common.CopyBytes(k), v)
 		if err != nil {
 			t.Fatal(err)
 		}
