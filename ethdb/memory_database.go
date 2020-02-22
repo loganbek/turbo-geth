@@ -18,7 +18,7 @@ package ethdb
 
 import (
 	"github.com/ledgerwatch/bolt"
-
+	"github.com/ledgerwatch/turbo-geth/common"
 	"github.com/ledgerwatch/turbo-geth/log"
 )
 
@@ -71,7 +71,7 @@ func (db *BoltDatabase) MemCopy() Database {
 					return err
 				}
 				return b.ForEach(func(k, v []byte) error {
-					if err := newBucketToWrite.Put(k, v); err != nil {
+					if err := newBucketToWrite.Put(common.CopyBytes(k), common.CopyBytes(v)); err != nil {
 						return err
 					}
 					return nil
