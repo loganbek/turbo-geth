@@ -616,8 +616,9 @@ func execToBlock(block uint64, fromScratch bool) {
 	if fromScratch {
 		os.Remove("statedb")
 	}
-	stateDb, err := ethdb.NewBoltDatabase("statedb")
-	check(err)
+	//stateDb, err := ethdb.NewBoltDatabase("statedb")
+	//check(err)
+	stateDb := ethdb.NewMemDatabase()
 	defer stateDb.Close()
 
 	//_, _, _, err = core.SetupGenesisBlock(stateDb, core.DefaultGenesisBlock())
@@ -784,7 +785,7 @@ func testStartup() {
 }
 
 func testResolveCached() {
-	execToBlock(1250454, false)
+	execToBlock(100_000_000, false)
 	return
 	//startTime := time.Now()
 	ethDb, err := ethdb.NewBoltDatabase(node.DefaultDataDir() + "/geth-remove-me/geth/chaindata")

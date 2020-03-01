@@ -19,8 +19,10 @@ package ethdb
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path"
+	"time"
 
 	"github.com/ledgerwatch/bolt"
 	"github.com/ledgerwatch/turbo-geth/common"
@@ -77,6 +79,52 @@ func NewBoltDatabase(file string) (*BoltDatabase, error) {
 	}); err != nil {
 		return nil, err
 	}
+
+	_, dbName := path.Split(file)
+	if dbName != "chaindata" {
+		ticker := time.NewTicker(25 * time.Second)
+
+		go func() {
+			defer ticker.Stop()
+			for range ticker.C {
+				countersStorage := map[int]int{}
+				counters := map[int]int{}
+				amountOfDestructed := 0
+				if err1 := db.View(func(tx *bolt.Tx) error {
+					if err2 := tx.Bucket(dbutils.StorageBucket).ForEach(func(k, v []byte) error {
+						if _, ok := countersStorage[len(k)]; !ok {
+							countersStorage[len(k)] = 0
+						}
+						countersStorage[len(k)]++
+
+						return nil
+					}); err2 != nil {
+						return err2
+					}
+
+					if err2 := tx.Bucket(dbutils.IntermediateTrieHashBucket).ForEach(func(k, v []byte) error {
+						if len(v) == 0 {
+							amountOfDestructed++
+						}
+						if _, ok := counters[len(k)]; !ok {
+							counters[len(k)] = 0
+						}
+						counters[len(k)]++
+
+						return nil
+					}); err2 != nil {
+						return err2
+					}
+					return nil
+				}); err1 != nil {
+					panic(err1)
+				}
+				fmt.Printf("IntermediateBucketStats: %+v %d\n", counters, amountOfDestructed)
+				fmt.Printf("StorageBucketStats: %+v\n", countersStorage)
+			}
+		}()
+	}
+
 	return &BoltDatabase{
 		db:  db,
 		log: logger,

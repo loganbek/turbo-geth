@@ -40,7 +40,7 @@ import (
 )
 
 // Trie cache generation limit after which to evict trie nodes from memory.
-var MaxTrieCacheGen = uint32(1024 * 1024)
+var MaxTrieCacheGen = uint32(64)
 
 const (
 	//FirstContractIncarnation - first incarnation for contract accounts. After 1 it increases by 1.
@@ -342,7 +342,7 @@ func ClearTombstonesForNewStorage(someStorageExistsInThisSubtree func(prefix []b
 }
 
 func (tds *TrieDbState) putIntermediateHash(key []byte, nodeHash []byte) {
-	if err := tds.db.Put(dbutils.IntermediateTrieHashBucket, key, nodeHash); err != nil {
+	if err := tds.db.Put(dbutils.IntermediateTrieHashBucket, common.CopyBytes(key), common.CopyBytes(nodeHash)); err != nil {
 		log.Warn("could not put intermediate trie hash", "err", err)
 	}
 }
