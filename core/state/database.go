@@ -40,7 +40,7 @@ import (
 )
 
 // Trie cache generation limit after which to evict trie nodes from memory.
-var MaxTrieCacheGen = uint32(2)
+var MaxTrieCacheGen = uint32(32)
 
 const (
 	//FirstContractIncarnation - first incarnation for contract accounts. After 1 it increases by 1.
