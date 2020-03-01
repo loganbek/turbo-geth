@@ -607,7 +607,7 @@ func trieChart() {
 }
 
 func execToBlock(block uint64, fromScratch bool) {
-	blockDb, err := ethdb.NewBoltDatabase(node.DefaultDataDir() + "/geth-remove-me3/geth/chaindata")
+	blockDb, err := ethdb.NewBoltDatabase(node.DefaultDataDir() + "/geth/chaindata")
 	//ethDb, err := ethdb.NewBoltDatabase("/home/akhounov/.ethereum/geth/chaindata")
 	check(err)
 	bcb, err := core.NewBlockChain(blockDb, nil, params.MainnetChainConfig, ethash.NewFaker(), vm.Config{}, nil)
