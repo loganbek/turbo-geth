@@ -7,7 +7,6 @@ import (
 	"encoding/binary"
 	"flag"
 	"fmt"
-	"github.com/ledgerwatch/turbo-geth/common/changeset"
 	"io/ioutil"
 	"log"
 	"math/big"
@@ -19,6 +18,7 @@ import (
 
 	"github.com/ledgerwatch/bolt"
 	"github.com/ledgerwatch/turbo-geth/common"
+	"github.com/ledgerwatch/turbo-geth/common/changeset"
 	"github.com/ledgerwatch/turbo-geth/common/dbutils"
 	"github.com/ledgerwatch/turbo-geth/common/debug"
 	"github.com/ledgerwatch/turbo-geth/consensus/ethash"
@@ -619,6 +619,7 @@ func execToBlock(block uint64, fromScratch bool) {
 	}
 	stateDb, err := ethdb.NewBoltDatabase("statedb")
 	check(err)
+	//stateDb := ethdb.NewMemDatabase()
 	defer stateDb.Close()
 
 	//_, _, _, err = core.SetupGenesisBlock(stateDb, core.DefaultGenesisBlock())
@@ -785,7 +786,7 @@ func testStartup() {
 }
 
 func testResolveCached() {
-	execToBlock(1250454, false)
+	execToBlock(100_000_000, false)
 	return
 	//startTime := time.Now()
 	ethDb, err := ethdb.NewBoltDatabase(node.DefaultDataDir() + "/geth-remove-me/geth/chaindata")
